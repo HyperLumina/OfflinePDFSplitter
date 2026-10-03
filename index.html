@@ -1,0 +1,2258 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PDF Splitter — Workerless, Fast, GDPR-Safe</title>
+
+  <!--
+    PRIVACY & SECURITY NOTE:
+    100% client-side and volatile.
+    - No network calls or external CDN requests are ever made.
+    - Required libraries must be placed in ./vendor/pdf.min.js and ./vendor/pdf-lib.min.js.
+    - Loaded PDFs are held strictly in RAM and never written to IndexedDB or localStorage.
+  -->
+
+  <style>
+    /* ==========================================================================
+       1. THEME VARIABLES & RESET
+       ========================================================================== */
+    :root {
+      --bg: #f6f8fa;
+      --card: #ffffff;
+      --card2: #f9fbff;
+      --text: #0f172a;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --accent-2: #60a5fa;
+      --ok: #16a34a;
+      --warn: #eab308;
+      --err: #ef4444;
+      --radius: 12px;
+      --shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+      --sidebar-w: clamp(320px, 28vw, 560px);
+    }
+
+    [data-theme="dark"] {
+      --bg: #0b1220;
+      --card: #0f172a;
+      --card2: #111827;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --accent: #3b82f6;
+      --accent-2: #60a5fa;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --err: #f43f5e;
+      --shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      height: 100%;
+      margin: 0;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    /* ==========================================================================
+       2. LAYOUT & HEADER CONTROLS
+       ========================================================================== */
+    .app {
+      max-width: 1200px;
+      margin: 20px auto;
+      padding: 16px;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 20px;
+    }
+
+    header {
+      position: relative;
+      z-index: 40;
+      display: grid;
+      gap: 12px;
+      background: var(--card);
+      padding: 14px 16px;
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .head-row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+
+    h1 {
+      font-size: 18px;
+      margin: 0;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    #versionTag {
+      font-weight: 600;
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: color-mix(in oklab, var(--accent), transparent 90%);
+      margin-left: 6px;
+    }
+
+    /* Buttons & Inputs */
+    .btn {
+      background: var(--accent);
+      color: #ffffff;
+      border: none;
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.15s ease;
+    }
+
+    .btn:hover:not(:disabled) {
+      opacity: 0.9;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn.ghost {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid color-mix(in oklab, var(--accent), transparent 75%);
+    }
+
+    .btn.warn {
+      background: var(--warn);
+      color: #111827;
+    }
+
+    .btn.err {
+      background: var(--err);
+      color: #ffffff;
+    }
+
+    .btn.ok {
+      background: var(--ok);
+      color: #ffffff;
+    }
+
+    .small {
+      font-size: 13px;
+      padding: 6px 10px;
+    }
+
+    .row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .datetime-row input,
+    .input {
+      padding: 8px;
+      border-radius: 8px;
+      border: 1px solid color-mix(in oklab, var(--accent), transparent 82%);
+      background: var(--card2);
+      color: var(--text);
+    }
+
+    /* Grid for Top Controls */
+    .top-controls {
+      display: grid;
+      gap: 10px;
+      align-items: start;
+    }
+
+    .top-controls-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(12, 1fr);
+    }
+
+    .tc-span-12 { grid-column: span 12; }
+    .tc-span-8  { grid-column: span 8; }
+    .tc-span-6  { grid-column: span 6; }
+    .tc-span-4  { grid-column: span 4; }
+    .tc-span-3  { grid-column: span 3; }
+    .tc-span-2  { grid-column: span 2; }
+
+    @media (max-width: 980px) {
+      .top-controls-grid { grid-template-columns: repeat(6, 1fr); }
+      .tc-span-8, .tc-span-6, .tc-span-4 { grid-column: span 6; }
+      .tc-span-3, .tc-span-2 { grid-column: span 3; }
+    }
+
+    @media (max-width: 640px) {
+      .top-controls-grid { grid-template-columns: repeat(4, 1fr); }
+      .tc-span-3, .tc-span-2 { grid-column: span 4; }
+    }
+
+    /* ==========================================================================
+       3. UPLOAD, TEMPLATES & FILE LIST
+       ========================================================================== */
+    .panel {
+      background: var(--card);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 16px;
+    }
+
+    .upload-area {
+      border: 2px dashed color-mix(in oklab, var(--accent), transparent 75%);
+      border-radius: 10px;
+      padding: 14px;
+      text-align: center;
+      background: linear-gradient(180deg, color-mix(in oklab, var(--accent), transparent 95%), transparent);
+      cursor: pointer;
+    }
+
+    .upload-area.dragover {
+      border-color: var(--accent);
+      background: linear-gradient(180deg, color-mix(in oklab, var(--accent), transparent 88%), transparent);
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    .templates {
+      position: relative;
+      display: flex;
+      gap: 6px;
+    }
+
+    .autocomplete-list {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 40px;
+      background: var(--card2);
+      border: 1px solid color-mix(in oklab, var(--accent), transparent 80%);
+      max-height: 260px;
+      overflow: auto;
+      z-index: 1000;
+      border-radius: 8px;
+      padding: 6px;
+      box-shadow: var(--shadow);
+    }
+
+    .autocomplete-item {
+      padding: 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .autocomplete-item:hover {
+      background: color-mix(in oklab, var(--accent), transparent 90%);
+    }
+
+    .autocomplete-num {
+      color: var(--muted);
+      min-width: 2.5em;
+      text-align: right;
+    }
+
+    .progress {
+      height: 8px;
+      background: color-mix(in oklab, var(--accent-2), transparent 80%);
+      border-radius: 8px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+
+    .progress > div {
+      height: 100%;
+      width: 0;
+      background: linear-gradient(90deg, var(--accent-2), var(--accent));
+      transition: width 0.1s linear;
+    }
+
+    .file-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 140px;
+      overflow: auto;
+      padding: 6px;
+      background: var(--card2);
+      border-radius: 8px;
+      border: 1px solid color-mix(in oklab, var(--accent), transparent 88%);
+      margin-top: 4px;
+    }
+
+    .file-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 4px 6px;
+    }
+
+    .file-row-info {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .file-row-name {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 18rem;
+    }
+
+    /* ==========================================================================
+       4. VIRTUALIZED PAGE VIEWER
+       ========================================================================== */
+    .list-wrap {
+      background: linear-gradient(180deg, color-mix(in oklab, var(--card), transparent 0%), transparent);
+      border-radius: 12px;
+      min-height: 60vh;
+    }
+
+    .vl-viewport {
+      position: relative;
+      max-height: 72vh;
+      overflow: auto;
+    }
+
+    .vl-spacer {
+      width: 1px;
+      opacity: 0;
+    }
+
+    .vl-items {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+    }
+
+    .page-item {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(92%, 860px);
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      padding: 12px;
+      border-radius: 12px;
+      background: var(--card);
+      border: 1px solid color-mix(in oklab, var(--accent), transparent 88%);
+      box-shadow: var(--shadow);
+      user-select: none;
+    }
+
+    .page-item:hover {
+      border-color: color-mix(in oklab, var(--accent), transparent 65%);
+    }
+
+    .page-item.selected {
+      outline: 4px solid var(--accent);
+      background: linear-gradient(180deg, color-mix(in oklab, var(--accent), transparent 84%), transparent);
+    }
+
+    .thumb {
+      flex: 1;
+      width: 100%;
+      height: auto;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .page-num {
+      position: absolute;
+      top: 10px;
+      right: 12px;
+      background: rgba(15, 23, 42, 0.85);
+      color: #ffffff;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      pointer-events: none;
+    }
+
+    .grip {
+      cursor: grab;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: center;
+      color: var(--muted);
+      padding: 4px 8px;
+    }
+
+    .grip:active {
+      cursor: grabbing;
+    }
+
+    .grip .dot {
+      width: 4px;
+      height: 4px;
+      border-radius: 2px;
+      background: currentColor;
+    }
+
+    .actionbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      margin-bottom: 10px;
+      background: var(--card2);
+      border-radius: 10px;
+    }
+
+    .actionbar .leftc,
+    .actionbar .rightc {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    /* ==========================================================================
+       5. TEMPLATES DIRECTORY & TOASTS
+       ========================================================================== */
+    #templatesPanel {
+      grid-column: 1 / -1;
+    }
+
+    #templatesCenter {
+      width: min(92%, 860px);
+      margin: 0 auto;
+    }
+
+    #templatesPanel h2 {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    #templateList {
+      margin: 12px 0 0 0;
+      padding-left: 1.25rem;
+    }
+
+    #templateList li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 10px;
+      margin: 6px 0;
+      background: var(--card2);
+      border: 1px solid color-mix(in oklab, var(--accent), transparent 88%);
+      border-radius: 8px;
+    }
+
+    .tpl-name {
+      flex: 1;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .x-btn {
+      background: transparent;
+      color: var(--err);
+      border: 1px solid color-mix(in oklab, var(--err), transparent 60%);
+      border-radius: 999px;
+      width: 28px;
+      height: 28px;
+      line-height: 26px;
+      text-align: center;
+      cursor: pointer;
+    }
+
+    .x-btn:hover {
+      background: color-mix(in oklab, var(--err), transparent 90%);
+    }
+
+    .toasts {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 9999;
+    }
+
+    .toast {
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid color-mix(in oklab, var(--accent), transparent 80%);
+      padding: 10px 14px;
+      border-radius: 10px;
+      box-shadow: var(--shadow);
+      min-width: 220px;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+    }
+
+    .toast.ok   { border-color: color-mix(in oklab, var(--ok), transparent 50%); }
+    .toast.err  { border-color: color-mix(in oklab, var(--err), transparent 50%); }
+    .toast.warn { border-color: color-mix(in oklab, var(--warn), transparent 50%); }
+
+    /* ==========================================================================
+       6. WIDESCREEN (16:9+) SIDEBAR LAYOUT
+       ========================================================================== */
+    @media (min-aspect-ratio: 16/9) and (min-width: 1024px) {
+      .app {
+        max-width: min(98vw, 1800px);
+        grid-template-columns: var(--sidebar-w) 1fr;
+        align-items: start;
+      }
+
+      header {
+        position: sticky;
+        top: 20px;
+        max-height: calc(100vh - 40px);
+        overflow-y: auto;
+      }
+
+      .panel.right,
+      #templatesPanel {
+        grid-column: 2;
+      }
+
+      .top-controls-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+
+      .tc-span-12, .tc-span-8, .tc-span-6, .tc-span-4, .tc-span-3, .tc-span-2 {
+        grid-column: 1 / -1;
+      }
+
+      #exportRow {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      #exportRow .btn {
+        width: 100%;
+      }
+
+      #fileList {
+        max-height: 200px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- CONTROLS HEADER / SIDEBAR -->
+    <header>
+      <div class="head-row">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <h1>PDF Splitter</h1>
+          <span id="versionTag" class="muted">v1.5.1</span>
+        </div>
+
+        <div class="row">
+          <label class="theme-switch">
+            <input id="themeToggle" type="checkbox" />
+            <span class="muted">Dark</span>
+          </label>
+          <label class="ram-switch" title="Increases thumbnail cache size for smoother scrolling">
+            <input id="ramToggle" type="checkbox" />
+            <span class="muted">32 GB mode</span>
+          </label>
+          <button id="selectAll" class="btn ghost small" type="button">Select all</button>
+          <button id="clearSelection" class="btn ghost small" type="button">Clear</button>
+          <button id="wipeSessionBtn" class="btn err small" type="button" title="Immediately purge all loaded PDFs and memory">
+            Wipe Session
+          </button>
+        </div>
+      </div>
+
+      <div class="muted" style="font-size: 13px;">
+        Drag to reorder • Shift = range • Ctrl/Cmd = toggle • Enter = Split • 100% RAM-only (GDPR-safe)
+      </div>
+
+      <div class="top-controls">
+        <div class="top-controls-grid">
+          <!-- Upload Area -->
+          <div class="tc-span-6">
+            <div class="upload-area" id="uploadArea" title="Click to browse or drop PDFs here">
+              <strong>Drop PDFs here or click to browse</strong>
+              <div class="muted" style="margin-top: 4px; font-size: 13px;">
+                Held in volatile memory only — automatically cleared when tab closes.
+              </div>
+              <input type="file" id="fileInput" accept="application/pdf" multiple />
+            </div>
+          </div>
+
+          <!-- Template Input + Explicit Save Button -->
+          <div class="tc-span-3">
+            <label for="templateInput">Filename / Template</label>
+            <div class="templates" style="margin-top: 4px;">
+              <input
+                id="templateInput"
+                placeholder="Type template name or #..."
+                autocomplete="off"
+                class="input"
+                style="flex: 1; min-width: 0;"
+              />
+              <button
+                id="saveTemplateBtn"
+                class="btn ghost small"
+                type="button"
+                title="Save current name to reusable Templates list (do not save personal names)"
+              >
+                + Save
+              </button>
+              <div id="autocomplete" class="autocomplete-list" hidden></div>
+            </div>
+          </div>
+
+          <!-- Date & Time Controls -->
+          <div class="tc-span-3">
+            <div class="datetime-row row">
+              <div style="flex: 1;">
+                <label class="muted" for="dtLocal">Date &amp; time</label><br />
+                <input
+                  id="dtLocal"
+                  type="datetime-local"
+                  class="input"
+                  style="width: 100%;"
+                  min="1980-01-01T00:00"
+                  max="2099-12-31T23:59"
+                />
+              </div>
+              <div>
+                <label class="muted" for="seconds">Seconds</label><br />
+                <input
+                  id="seconds"
+                  type="number"
+                  min="0"
+                  max="59"
+                  value="00"
+                  class="input"
+                  style="width: 76px; text-align: center;"
+                />
+              </div>
+            </div>
+            <div style="margin-top: 8px;" class="row">
+              <input id="noDate" type="checkbox" />
+              <label for="noDate" style="font-size: 13px;">No Date (use 01-01-1980 09_00_00)</label>
+            </div>
+          </div>
+
+          <!-- Page-Number Range Selector -->
+          <div class="tc-span-6">
+            <label for="rangeInput">Select pages by numbers</label>
+            <div class="row" style="margin-top: 6px;">
+              <input
+                id="rangeInput"
+                placeholder="e.g., 1-3, 5, 8-10"
+                class="input"
+                style="flex: 1; min-width: 160px;"
+              />
+              <select id="rangeScope" class="input"></select>
+              <button id="applyRangesBtn" class="btn ghost" type="button">Select</button>
+            </div>
+            <small class="muted">“Combined” uses visible order; single file matches original page numbers.</small>
+          </div>
+
+          <!-- Split / Cancel / Undo / Folder Actions -->
+          <div class="tc-span-3">
+            <div class="row" id="exportRow" style="margin-top: 20px;">
+              <button id="splitBtn" class="btn" type="button">Split</button>
+              <button id="cancelBtn" class="btn err" type="button" style="display: none;">Cancel</button>
+              <button id="undoBtn" class="btn ghost" type="button">Undo last</button>
+              <button id="folderBtn" class="btn ghost small" type="button" title="Choose a custom save folder (if supported by browser)">
+                Set Folder
+              </button>
+            </div>
+            <div id="folderStatus" class="muted" style="font-size: 12px; margin-top: 4px;">
+              Saves directly to Downloads (no new tab)
+            </div>
+          </div>
+
+          <!-- Progress & Filename Preview -->
+          <div class="tc-span-3">
+            <label class="muted">Progress</label>
+            <div class="progress"><div id="progressBar"></div></div>
+            <div class="muted" style="margin-top: 6px; font-size: 13px; word-break: break-all;">
+              Output: <strong id="exampleFilename">—</strong>.pdf
+            </div>
+          </div>
+
+          <!-- Loaded Files List -->
+          <div class="tc-span-12">
+            <label>Loaded files</label>
+            <div class="file-list" id="fileList"></div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- PAGES VIEWER PANEL -->
+    <div class="panel right">
+      <div class="actionbar">
+        <div class="leftc">
+          <strong>Pages</strong>
+          <span id="pageCount" class="muted">(0 pages)</span>
+          <span class="muted" id="selMeta">• 0 selected</span>
+        </div>
+        <div class="rightc">
+          <div class="row">
+            <button id="zoomOutBtn" class="btn ghost small" type="button" title="Zoom out">−</button>
+            <div id="zoomLabel" class="muted" style="min-width: 52px; text-align: center;">100%</div>
+            <button id="zoomInBtn" class="btn ghost small" type="button" title="Zoom in">+</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="list-wrap">
+        <div class="vl-viewport" id="viewport">
+          <div class="vl-spacer" id="spacer"></div>
+          <div class="vl-items" id="items"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TEMPLATES DIRECTORY PANEL -->
+    <section id="templatesPanel" class="panel">
+      <div id="templatesCenter">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+          <h2>Saved Templates</h2>
+          <div class="muted"><small>Click ✕ to remove — numbering updates automatically</small></div>
+        </div>
+        <ol id="templateList"></ol>
+      </div>
+    </section>
+
+    <footer class="panel" style="grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center;">
+      <div class="muted"><small>Built with local PDF.js + PDF-Lib • Zero network calls • Zero disk persistence</small></div>
+      <div class="muted"><small id="buildStamp"></small></div>
+    </footer>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toasts" id="toasts"></div>
+
+  <script>
+    /* ==========================================================================
+       PDF Splitter — v1.5.1 (Direct Download & Folder Support)
+       ========================================================================== */
+    (function () {
+      'use strict';
+
+      const APP_VERSION = 'v1.5.1';
+      const BUILD_STAMP = '2026-09-29';
+
+      const DEFAULT_TEMPLATES = [
+        "1 to 1 Meeting", "Absence Mail", "Absence Record", "Absence & Return to Work",
+        "Attendance Chart", "Attendance Interview", "Attendance Sanction", "Bereavement Meeting",
+        "Certificate", "Change of Address Form", "Change of Personal Details Form", "Commendation",
+        "Customer Feedback", "Delivery Mail", "Driving Licence", "Doctors Note",
+        "DVLA Data Subject Access Request", "Fitness to Work Statement", "First Aid Certificate",
+        "Flexible Working Form", "General Information",
+        "Health Assessment", "Health Appointment", "Holiday Application", "Holiday Mail",
+        "Interview Mail", "Job Application", "Job Interview", "Job Offer", "Job Vacancy",
+        "Leaving Form", "Lost Property Mail", "Medical Assessment", "Medical Mail",
+        "Hospital Admission", "Telephone Interview", "Notification of Entry", "Occurrence Report",
+        "Occupational Health Assessment", "Overtime Mail", "Passport", "Payslip", "Payroll",
+        "Paternity Leave Application", "Personal Details", "Previous Employer Mail", "Questionnaire",
+        "Rates of Pay", "Right to Work", "Rota Mail", "Rota", "Staff Record", "Sickness Record",
+        "Sickness Mail", "Trainee Feedback", "Ts & Cs of Employment", "Unsuccessful Job Application",
+        "Unsuccessful Job Interview", "Vacancy Application"
+      ];
+
+      /* ------------------------------------------------------------------------
+         1. STRICT LOCAL SCRIPT LOADERS & LEGACY DB CLEANUP
+         ------------------------------------------------------------------------ */
+      function loadLocalScript(src) {
+        return new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = src;
+          script.async = true;
+          script.onload = () => resolve();
+          script.onerror = () => reject(new Error(`Failed to load local script: ${src}`));
+          document.head.appendChild(script);
+        });
+      }
+
+      async function loadVendorLibraries() {
+        if (!window.pdfjsLib) {
+          await loadLocalScript('./vendor/pdf.min.js');
+        }
+        if (!window.PDFLib) {
+          await loadLocalScript('./vendor/pdf-lib.min.js');
+        }
+        if (!window.pdfjsLib || !window.PDFLib) {
+          throw new Error('Vendor libraries missing in ./vendor/');
+        }
+        return { pdfjsLib: window.pdfjsLib, PDFLib: window.PDFLib };
+      }
+
+      function purgeLegacyDatabase() {
+        try {
+          if (window.indexedDB && typeof window.indexedDB.deleteDatabase === 'function') {
+            window.indexedDB.deleteDatabase('pdfsplit-pro');
+          }
+        } catch (err) {
+          console.warn('Could not purge legacy IndexedDB:', err);
+        }
+      }
+
+      /* ------------------------------------------------------------------------
+         2. GENERAL UTILITIES
+         ------------------------------------------------------------------------ */
+      const pad2 = (n) => String(n).padStart(2, '0');
+      const isDigits = (str) => /^\d+$/.test(str.trim());
+
+      function debounce(fn, delayMs) {
+        let timerId = null;
+        return (...args) => {
+          clearTimeout(timerId);
+          timerId = setTimeout(() => fn(...args), delayMs);
+        };
+      }
+
+      function generateUUID() {
+        if (window.crypto && crypto.randomUUID) {
+          return crypto.randomUUID();
+        }
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (ch) => {
+          const rand = (Math.random() * 16) | 0;
+          const val = ch === 'x' ? rand : (rand & 0x3) | 0x8;
+          return val.toString(16);
+        });
+      }
+
+      function escapeHTML(str) {
+        const lookup = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+        return String(str).replace(/[&<>"']/g, (ch) => lookup[ch]);
+      }
+
+      function sanitizeFilename(name) {
+        return String(name).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim();
+      }
+
+      /* ------------------------------------------------------------------------
+         3. MAIN APPLICATION INITIALIZATION
+         ------------------------------------------------------------------------ */
+      (async function main() {
+        purgeLegacyDatabase();
+
+        document.getElementById('versionTag').textContent = APP_VERSION;
+        const buildStampEl = document.getElementById('buildStamp');
+        if (buildStampEl) {
+          buildStampEl.textContent = `Build ${BUILD_STAMP} • ${APP_VERSION}`;
+        }
+
+        const { pdfjsLib, PDFLib } = await loadVendorLibraries();
+        const { degrees } = PDFLib;
+
+        try {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+          pdfjsLib.disableWorker = true;
+        } catch (_) {}
+
+        /* ----- DOM References ----- */
+        const uploadArea        = document.getElementById('uploadArea');
+        const fileInput         = document.getElementById('fileInput');
+        const fileListEl        = document.getElementById('fileList');
+        const viewport          = document.getElementById('viewport');
+        const spacer            = document.getElementById('spacer');
+        const itemsHost         = document.getElementById('items');
+        const splitBtn          = document.getElementById('splitBtn');
+        const cancelBtn         = document.getElementById('cancelBtn');
+        const undoBtn           = document.getElementById('undoBtn');
+        const folderBtn         = document.getElementById('folderBtn');
+        const folderStatus      = document.getElementById('folderStatus');
+        const selectAllBtn      = document.getElementById('selectAll');
+        const clearSelectionBtn = document.getElementById('clearSelection');
+        const wipeSessionBtn    = document.getElementById('wipeSessionBtn');
+        const zoomOutBtn        = document.getElementById('zoomOutBtn');
+        const zoomInBtn         = document.getElementById('zoomInBtn');
+        const zoomLabel         = document.getElementById('zoomLabel');
+        const progressBar       = document.getElementById('progressBar');
+        const templateInput     = document.getElementById('templateInput');
+        const saveTemplateBtn   = document.getElementById('saveTemplateBtn');
+        const autocomplete      = document.getElementById('autocomplete');
+        const templateListEl    = document.getElementById('templateList');
+        const dtLocal           = document.getElementById('dtLocal');
+        const secondsInput      = document.getElementById('seconds');
+        const noDateCheckbox    = document.getElementById('noDate');
+        const pageCountEl       = document.getElementById('pageCount');
+        const exampleFilename   = document.getElementById('exampleFilename');
+        const selMeta           = document.getElementById('selMeta');
+        const rangeInput        = document.getElementById('rangeInput');
+        const rangeScope        = document.getElementById('rangeScope');
+        const applyRangesBtn    = document.getElementById('applyRangesBtn');
+        const themeToggle       = document.getElementById('themeToggle');
+        const ramToggle         = document.getElementById('ramToggle');
+        const toasts            = document.getElementById('toasts');
+
+        /* ----- Application State (Volatile in RAM) ----- */
+        const docs        = [];
+        const pages       = [];
+        const pageIndex   = new Map();
+        const selections  = new Set();
+        let lastClickedId = null;
+        let lastUndo      = null;
+        let exportCancelFlag = false;
+        let zoom          = 1.0;
+        let outputDirHandle = null; // Optional custom directory handle
+
+        // Virtual List State
+        const LIST_PAD = 24;
+        const LIST_GAP = 18;
+        let pool       = [];
+        let poolSize   = 20;
+        let visIds     = [];
+        let offsets    = [];
+        const heightsMap = new Map();
+
+        /* ----- UI Feedback Helpers ----- */
+        function showToast(message, type = '') {
+          const toastEl = document.createElement('div');
+          toastEl.className = `toast ${type}`.trim();
+          toastEl.textContent = message;
+          toasts.appendChild(toastEl);
+
+          setTimeout(() => {
+            toastEl.style.opacity = '0';
+            toastEl.style.transform = 'translateY(6px)';
+          }, 2600);
+          setTimeout(() => toastEl.remove(), 3200);
+        }
+
+        function setProgress(percent) {
+          const clamped = Math.max(0, Math.min(100, percent));
+          progressBar.style.width = `${clamped}%`;
+        }
+
+        /* ----- Optional Output Folder Selection ----- */
+        folderBtn.addEventListener('click', async () => {
+          if (typeof window.showDirectoryPicker === 'function') {
+            try {
+              outputDirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+              folderStatus.textContent = `Folder: ${outputDirHandle.name}`;
+              showToast(`Output folder set to "${outputDirHandle.name}"`, 'ok');
+            } catch (err) {
+              if (err?.name !== 'AbortError') {
+                showToast('Could not select folder', 'err');
+              }
+            }
+          } else {
+            alert(
+              'LibreWolf / Firefox manages download folders in browser settings:\n\n' +
+              '1. Open a tab and go to: about:preferences\n' +
+              '2. Scroll to "Downloads"\n' +
+              '3. Click "Browse..." next to "Save files to" to set your target folder (or enable "Always ask you where to save files").\n\n' +
+              'Note: Opening in a new tab and saving to AppData\\Temp has already been disabled!'
+            );
+          }
+        });
+
+        /* ----------------------------------------------------------------------
+           4. THUMBNAIL LRU CACHE & RAM MODE
+           ---------------------------------------------------------------------- */
+        const deviceRamGb    = navigator.deviceMemory || 4;
+        const savedRamMode   = localStorage.getItem('ramMode');
+        const initialRamMode = savedRamMode || (deviceRamGb >= 24 ? '32' : '16');
+        let cacheLimit       = initialRamMode === '32' ? 280 : 180;
+
+        const thumbCache     = new Map();
+        const queuedPrefetch = new Set();
+        let prefetchRunning  = false;
+
+        function clearAllThumbCache() {
+          for (const rec of thumbCache.values()) {
+            if (rec?.bmp?.close) {
+              try { rec.bmp.close(); } catch (_) {}
+            }
+          }
+          thumbCache.clear();
+          queuedPrefetch.clear();
+        }
+
+        function trimCache() {
+          while (thumbCache.size > cacheLimit) {
+            const oldestKey = thumbCache.keys().next().value;
+            const oldestRec = thumbCache.get(oldestKey);
+            if (oldestRec?.bmp?.close) {
+              try { oldestRec.bmp.close(); } catch (_) {}
+            }
+            thumbCache.delete(oldestKey);
+          }
+        }
+
+        function getCacheKey(pageId, zoomLevel, rotation) {
+          const quantizedZoom = Math.round(zoomLevel * 10) / 10;
+          const normRotation  = ((rotation || 0) % 360 + 360) % 360;
+          return `${pageId}@${quantizedZoom}#${normRotation}`;
+        }
+
+        function cacheGet(key) {
+          const hit = thumbCache.get(key);
+          if (!hit) return null;
+          thumbCache.delete(key);
+          thumbCache.set(key, hit);
+          return hit;
+        }
+
+        function cacheSet(key, value) {
+          thumbCache.set(key, value);
+          trimCache();
+        }
+
+        /* ----------------------------------------------------------------------
+           5. THEME & RAM MODE CONTROLS
+           ---------------------------------------------------------------------- */
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        document.documentElement.setAttribute('data-theme', savedTheme);
+        themeToggle.checked = savedTheme === 'dark';
+
+        themeToggle.addEventListener('change', () => {
+          const nextTheme = themeToggle.checked ? 'dark' : 'light';
+          document.documentElement.setAttribute('data-theme', nextTheme);
+          localStorage.setItem('theme', nextTheme);
+          refreshLayoutDeep();
+        });
+
+        ramToggle.checked = initialRamMode === '32';
+        function applyRamMode(mode, notify = true) {
+          const prevLimit = cacheLimit;
+          cacheLimit = mode === '32' ? 280 : 180;
+          localStorage.setItem('ramMode', mode);
+          trimCache();
+          if (cacheLimit > prevLimit) {
+            schedulePrefetch();
+          }
+          if (notify) {
+            showToast(`RAM mode: ${mode} GB • Cache ${cacheLimit}`, 'ok');
+          }
+        }
+        ramToggle.addEventListener('change', () => applyRamMode(ramToggle.checked ? '32' : '16'));
+
+        /* ----------------------------------------------------------------------
+           6. FILE UPLOAD, REMOVAL & SESSION WIPE
+           ---------------------------------------------------------------------- */
+        uploadArea.addEventListener('click', () => fileInput.click());
+        uploadArea.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          uploadArea.classList.add('dragover');
+        });
+        uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+        uploadArea.addEventListener('drop', async (e) => {
+          e.preventDefault();
+          uploadArea.classList.remove('dragover');
+          try {
+            await handleFiles(e.dataTransfer.files);
+          } catch (err) {
+            showToast(`Failed to load file(s): ${err.message || err}`, 'err');
+          }
+        });
+
+        fileInput.addEventListener('change', async (e) => {
+          try {
+            await handleFiles(e.target.files);
+          } catch (err) {
+            showToast(`Failed to load file(s): ${err.message || err}`, 'err');
+          }
+          e.target.value = '';
+        });
+
+        async function handleFiles(fileList) {
+          if (!fileList || !fileList.length) return;
+
+          for (const file of fileList) {
+            const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+            if (!isPdf) {
+              showToast(`${file.name} is not a PDF`, 'err');
+              continue;
+            }
+
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            if (!bytes.length) {
+              showToast(`${file.name}: empty file`, 'err');
+              continue;
+            }
+
+            const pdfjsDoc = await pdfjsLib.getDocument({ data: bytes, verbosity: 0 }).promise;
+            const docId = generateUUID();
+            docs.push({ id: docId, name: file.name, pdfjs: pdfjsDoc, bytes });
+
+            for (let pageNum = 1; pageNum <= pdfjsDoc.numPages; pageNum++) {
+              const pageId = generateUUID();
+              const pageObj = {
+                id: pageId,
+                docId,
+                pageNum,
+                removed: false,
+                rotation: 0,
+                canvasEl: null,
+                renderTask: null
+              };
+              pageIndex.set(pageId, pages.length);
+              pages.push(pageObj);
+            }
+          }
+
+          buildFileList();
+          refreshRangeScope();
+          ensurePool();
+          updateCounts();
+          updateExampleFilename();
+          refreshLayoutDeep();
+          schedulePrefetch();
+          showToast('Files loaded into memory', 'ok');
+        }
+
+        function buildFileList() {
+          fileListEl.innerHTML = '';
+
+          for (const doc of docs) {
+            const availableCount = pages.filter((p) => p.docId === doc.id && !p.removed).length;
+
+            const row = document.createElement('div');
+            row.className = 'file-row';
+
+            const info = document.createElement('div');
+            info.className = 'file-row-info';
+
+            const nameStrong = document.createElement('strong');
+            nameStrong.className = 'file-row-name';
+            nameStrong.textContent = doc.name;
+            nameStrong.title = doc.name;
+
+            const countSpan = document.createElement('span');
+            countSpan.className = 'muted';
+            countSpan.textContent = `(${availableCount} / ${doc.pdfjs.numPages} pages)`;
+
+            info.appendChild(nameStrong);
+            info.appendChild(countSpan);
+
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'btn ghost small';
+            removeBtn.textContent = 'Remove';
+            removeBtn.title = 'Remove this file from memory';
+            removeBtn.addEventListener('click', () => {
+              if (confirm(`Remove "${doc.name}" and all of its pages from memory?`)) {
+                removeFile(doc.id);
+              }
+            });
+
+            row.appendChild(info);
+            row.appendChild(removeBtn);
+            fileListEl.appendChild(row);
+          }
+        }
+
+        function removeFile(docId) {
+          const docIdx = docs.findIndex((d) => d.id === docId);
+          if (docIdx < 0) return;
+
+          const doc = docs[docIdx];
+          const affectedIds = new Set(pages.filter((p) => p.docId === docId).map((p) => p.id));
+
+          for (const row of pool) {
+            if (row.boundId && affectedIds.has(row.boundId)) {
+              const p = pages[pageIndex.get(row.boundId)];
+              if (p?.renderTask) {
+                try { p.renderTask.cancel(); } catch (_) {}
+                p.renderTask = null;
+              }
+              if (p) p.canvasEl = null;
+              row.boundId = null;
+              row.el.style.display = 'none';
+            }
+          }
+
+          for (const key of Array.from(thumbCache.keys())) {
+            const pageId = key.split('@', 1)[0];
+            if (affectedIds.has(pageId)) {
+              const rec = thumbCache.get(key);
+              if (rec?.bmp?.close) {
+                try { rec.bmp.close(); } catch (_) {}
+              }
+              thumbCache.delete(key);
+            }
+          }
+
+          for (const id of affectedIds) {
+            selections.delete(id);
+            heightsMap.delete(id);
+            pageIndex.delete(id);
+          }
+
+          if (doc.pdfjs?.destroy) {
+            try { doc.pdfjs.destroy(); } catch (_) {}
+          }
+
+          const remainingPages = pages.filter((p) => p.docId !== docId);
+          pages.length = 0;
+          pages.push(...remainingPages);
+          pages.forEach((p, idx) => pageIndex.set(p.id, idx));
+          docs.splice(docIdx, 1);
+
+          buildFileList();
+          refreshRangeScope();
+          updateCounts();
+          refreshSelectionUI();
+          refreshLayoutDeep();
+          showToast(`Removed ${doc.name}`, 'ok');
+        }
+
+        wipeSessionBtn.addEventListener('click', () => {
+          if (docs.length === 0 && !templateInput.value) {
+            showToast('Session is already clean', 'ok');
+            return;
+          }
+          if (!confirm('Wipe all loaded PDFs, selections, and current inputs from memory?')) {
+            return;
+          }
+
+          for (const p of pages) {
+            if (p.renderTask) {
+              try { p.renderTask.cancel(); } catch (_) {}
+            }
+          }
+          for (const d of docs) {
+            if (d.pdfjs?.destroy) {
+              try { d.pdfjs.destroy(); } catch (_) {}
+            }
+          }
+
+          docs.length = 0;
+          pages.length = 0;
+          pageIndex.clear();
+          selections.clear();
+          heightsMap.clear();
+          lastClickedId = null;
+          lastUndo = null;
+          clearAllThumbCache();
+          purgeLegacyDatabase();
+
+          templateInput.value = '';
+          rangeInput.value = '';
+          buildFileList();
+          refreshRangeScope();
+          updateCounts();
+          refreshSelectionUI();
+          updateExampleFilename();
+          refreshLayoutDeep();
+          showToast('Session wiped from memory', 'ok');
+        });
+
+        function updateCounts() {
+          const available = pages.reduce((count, p) => count + (p.removed ? 0 : 1), 0);
+          pageCountEl.textContent = `(${available} pages)`;
+        }
+
+        /* ----------------------------------------------------------------------
+           7. VIRTUALIZED VIEWER & DRAG-AND-DROP REORDERING
+           ---------------------------------------------------------------------- */
+        const refreshLayoutDeep = debounce(() => {
+          computeLayout();
+          renderWindow();
+        }, 16);
+
+        function rebuildVisible() {
+          visIds = pages.filter((p) => !p.removed).map((p) => p.id);
+          const visSet = new Set(visIds);
+          for (const id of heightsMap.keys()) {
+            if (!visSet.has(id)) heightsMap.delete(id);
+          }
+        }
+
+        function estimateHeight() {
+          const availWidth = Math.min(780, Math.max(360, viewport.clientWidth - 72));
+          const a4Aspect = 1.414;
+          return Math.round((availWidth * zoom) / a4Aspect + 24);
+        }
+
+        function getHeightByIndex(visIdx) {
+          const id = visIds[visIdx];
+          return heightsMap.get(id) ?? estimateHeight();
+        }
+
+        function computeOffsets() {
+          offsets.length = 0;
+          let y = LIST_PAD;
+          for (let i = 0; i < visIds.length; i++) {
+            offsets[i] = y;
+            y += getHeightByIndex(i) + LIST_GAP;
+          }
+          spacer.style.height = `${y}px`;
+        }
+
+        function positionBoundRows() {
+          for (const row of pool) {
+            if (row.visIndex >= 0) {
+              row.el.style.top = `${offsets[row.visIndex]}px`;
+            }
+          }
+        }
+
+        function computeLayout() {
+          rebuildVisible();
+          computeOffsets();
+          positionBoundRows();
+        }
+
+        function ensurePool() {
+          const needed = Math.min(60, Math.max(12, Math.ceil(viewport.clientHeight / estimateHeight()) + 8));
+          if (poolSize === needed && pool.length) return;
+
+          poolSize = needed;
+          itemsHost.innerHTML = '';
+          pool = [];
+
+          for (let i = 0; i < poolSize; i++) {
+            const el = createRowElement();
+            itemsHost.appendChild(el);
+            pool.push({ el, boundId: null, visIndex: -1 });
+          }
+        }
+
+        function createRowElement() {
+          const el = document.createElement('div');
+          el.className = 'page-item';
+          el.draggable = true;
+
+          const grip = document.createElement('div');
+          grip.className = 'grip';
+          grip.title = 'Drag to reorder';
+          grip.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="dot"></div>';
+          el.appendChild(grip);
+
+          const badge = document.createElement('div');
+          badge.className = 'page-num';
+          el.appendChild(badge);
+
+          const canvas = document.createElement('canvas');
+          canvas.className = 'thumb';
+          el.appendChild(canvas);
+
+          el.addEventListener('click', (e) => {
+            const pid = el.dataset.pid;
+            if (pid) handleSelect(pid, e);
+          });
+
+          el.addEventListener('keydown', (e) => {
+            if (e.key === ' ' || e.key === 'Enter') {
+              e.preventDefault();
+              const pid = el.dataset.pid;
+              if (pid) handleSelect(pid, e);
+            }
+          });
+
+          el.addEventListener('dragstart', (e) => {
+            e.dataTransfer.setData('text/plain', el.dataset.pid || '');
+            el.classList.add('dragging');
+          });
+
+          el.addEventListener('dragend', () => el.classList.remove('dragging'));
+          return el;
+        }
+
+        function binaryFirstIndex(scrollTop) {
+          let lo = 0;
+          let hi = visIds.length - 1;
+          let ans = visIds.length;
+          while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            const bottom = offsets[mid] + getHeightByIndex(mid);
+            if (bottom > scrollTop) {
+              ans = mid;
+              hi = mid - 1;
+            } else {
+              lo = mid + 1;
+            }
+          }
+          return Math.max(0, ans - 2);
+        }
+
+        function binaryLastIndex(scrollBottom) {
+          let lo = 0;
+          let hi = visIds.length - 1;
+          let ans = -1;
+          while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (offsets[mid] < scrollBottom) {
+              ans = mid;
+              lo = mid + 1;
+            } else {
+              hi = mid - 1;
+            }
+          }
+          return Math.min(visIds.length - 1, ans + 2);
+        }
+
+        function renderWindow() {
+          ensurePool();
+          rebuildVisible();
+          computeOffsets();
+
+          const top = viewport.scrollTop;
+          const bottom = top + viewport.clientHeight;
+          const first = binaryFirstIndex(top);
+          const last = binaryLastIndex(bottom);
+
+          for (let i = 0; i < poolSize; i++) {
+            const visIndex = first + i;
+            const row = pool[i];
+
+            if (visIndex < first || visIndex > last || visIndex >= visIds.length) {
+              row.el.style.display = 'none';
+              row.boundId = null;
+              row.visIndex = -1;
+              continue;
+            }
+
+            const id = visIds[visIndex];
+            row.el.style.display = 'flex';
+            row.el.style.top = `${offsets[visIndex]}px`;
+
+            if (row.boundId !== id) {
+              bindRow(row, id, visIndex);
+            } else {
+              row.visIndex = visIndex;
+              row.el.classList.toggle('selected', selections.has(row.boundId));
+            }
+          }
+
+          schedulePrefetch(first, last);
+        }
+
+        function bindRow(row, id, visIndex) {
+          const oldId = row.boundId;
+          const canvas = row.el.querySelector('canvas');
+
+          if (oldId && oldId !== id) {
+            const prevPage = pages[pageIndex.get(oldId)];
+            if (prevPage?.renderTask) {
+              try { prevPage.renderTask.cancel(); } catch (_) {}
+              prevPage.renderTask = null;
+            }
+            if (prevPage && prevPage.canvasEl === canvas) {
+              prevPage.canvasEl = null;
+            }
+          }
+
+          const p = pages[pageIndex.get(id)];
+          row.boundId = id;
+          row.visIndex = visIndex;
+          row.el.dataset.pid = id;
+          row.el.classList.toggle('selected', selections.has(id));
+          row.el.querySelector('.page-num').textContent = p.pageNum;
+          p.canvasEl = canvas;
+
+          const key = getCacheKey(p.id, zoom, p.rotation || 0);
+          const cached = cacheGet(key);
+          if (cached) {
+            applyBitmapToCanvas(canvas, cached);
+            heightsMap.set(p.id, Math.round(cached.cssH + 24));
+          }
+          renderThumb(p, visIndex, !cached);
+        }
+
+        function applyBitmapToCanvas(canvas, rec) {
+          const ctx = canvas.getContext('2d');
+          canvas.width = rec.devW;
+          canvas.height = rec.devH;
+          canvas.style.width = `${rec.cssW}px`;
+          canvas.style.height = `${rec.cssH}px`;
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.imageSmoothingEnabled = true;
+          ctx.drawImage(rec.bmp, 0, 0);
+        }
+
+        viewport.addEventListener('scroll', debounce(renderWindow, 10));
+        window.addEventListener('resize', debounce(() => {
+          ensurePool();
+          refreshLayoutDeep();
+          schedulePrefetch();
+        }, 120));
+
+        /* ----- Drag & Drop Reorder ----- */
+        let dragLine = null;
+
+        function drawDragIndicator(visIdx) {
+          if (!dragLine) {
+            dragLine = document.createElement('div');
+            dragLine.style.position = 'absolute';
+            dragLine.style.height = '2px';
+            dragLine.style.background = 'var(--accent)';
+            dragLine.style.left = '5%';
+            dragLine.style.right = '5%';
+            itemsHost.appendChild(dragLine);
+          }
+          const clampedIdx = Math.max(0, Math.min(visIdx, offsets.length - 1));
+          dragLine.style.top = `${offsets[clampedIdx] || LIST_PAD}px`;
+        }
+
+        function clearDragIndicator() {
+          if (dragLine) {
+            dragLine.remove();
+            dragLine = null;
+          }
+        }
+
+        viewport.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          const pid = e.dataTransfer.getData('text/plain');
+          if (!pid) return;
+          const y = e.clientY - viewport.getBoundingClientRect().top + viewport.scrollTop;
+          drawDragIndicator(binaryFirstIndex(y));
+        });
+
+        viewport.addEventListener('drop', (e) => {
+          e.preventDefault();
+          const pid = e.dataTransfer.getData('text/plain');
+          if (!pid) return;
+          clearDragIndicator();
+          const y = e.clientY - viewport.getBoundingClientRect().top + viewport.scrollTop;
+          movePageToVisibleIndex(pid, binaryFirstIndex(y));
+        });
+
+        function movePageToVisibleIndex(pid, targetVisIdx) {
+          const visible = pages.filter((p) => !p.removed);
+          const fromIdx = visible.findIndex((p) => p.id === pid);
+          if (fromIdx < 0) return;
+
+          const toIdx = Math.max(0, Math.min(visible.length - 1, targetVisIdx));
+          if (fromIdx === toIdx) return;
+
+          const fromPage = visible[fromIdx];
+          const targetBefore = visible[toIdx] || null;
+          const fromGlobal = pages.indexOf(fromPage);
+          let toGlobal = targetBefore ? pages.indexOf(targetBefore) : pages.length;
+
+          pages.splice(fromGlobal, 1);
+          if (toGlobal > fromGlobal) toGlobal--;
+          pages.splice(toGlobal, 0, fromPage);
+          pages.forEach((p, idx) => pageIndex.set(p.id, idx));
+
+          refreshLayoutDeep();
+          refreshSelectionUI();
+          showToast('Page reordered', 'ok');
+        }
+
+        /* ----------------------------------------------------------------------
+           8. THUMBNAIL RENDERING & PREFETCHING
+           ---------------------------------------------------------------------- */
+        async function renderThumb(p, visIndex, forceRender) {
+          if (p.removed) return;
+          const doc = docs.find((d) => d.id === p.docId);
+          if (!doc) return;
+
+          const canvas = p.canvasEl;
+          const key = getCacheKey(p.id, zoom, p.rotation || 0);
+          const cached = cacheGet(key);
+
+          if (cached && !forceRender && canvas) {
+            applyBitmapToCanvas(canvas, cached);
+            heightsMap.set(p.id, Math.round(cached.cssH + 24));
+            return;
+          }
+
+          const page = await doc.pdfjs.getPage(p.pageNum);
+          const baseRotation = (page.rotate || 0) % 360;
+          const extraRotation = (p.rotation || 0) % 360;
+          const totalRotation = (baseRotation + extraRotation) % 360;
+
+          const availWidth = Math.min(820, Math.max(420, viewport.clientWidth - 120));
+          const unscaledVp = page.getViewport({ scale: 1, rotation: totalRotation });
+          const scale = (availWidth * zoom) / unscaledVp.width;
+          const vp = page.getViewport({ scale, rotation: totalRotation });
+
+          const dpr = Math.min(2, window.devicePixelRatio || 1);
+          const offscreen = document.createElement('canvas');
+          offscreen.width = Math.floor(vp.width * dpr);
+          offscreen.height = Math.floor(vp.height * dpr);
+
+          const ctx = offscreen.getContext('2d');
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, vp.width, vp.height);
+
+          if (p.renderTask) {
+            try { p.renderTask.cancel(); } catch (_) {}
+            p.renderTask = null;
+          }
+
+          const task = page.render({ canvasContext: ctx, viewport: vp });
+          p.renderTask = task;
+
+          try {
+            await task.promise;
+          } catch (err) {
+            if (err?.name === 'RenderingCancelledException' || /Rendering cancelled/i.test(err?.message)) {
+              return;
+            }
+            console.error('Thumbnail render error:', err);
+            return;
+          } finally {
+            p.renderTask = null;
+          }
+
+          let bmp = null;
+          try {
+            bmp = await createImageBitmap(offscreen);
+          } catch (_) {}
+
+          const rec = {
+            bmp: bmp || offscreen,
+            cssW: vp.width,
+            cssH: vp.height,
+            devW: offscreen.width,
+            devH: offscreen.height
+          };
+          cacheSet(key, rec);
+
+          if (p.canvasEl) {
+            applyBitmapToCanvas(p.canvasEl, rec);
+            heightsMap.set(p.id, Math.round(rec.cssH + 24));
+            refreshLayoutDeep();
+          }
+
+          try {
+            if (page.cleanup) page.cleanup();
+          } catch (_) {}
+        }
+
+        function schedulePrefetch(first, last) {
+          if (first == null || last == null) {
+            const top = viewport.scrollTop;
+            const bottom = top + viewport.clientHeight;
+            first = binaryFirstIndex(top);
+            last = binaryLastIndex(bottom);
+          }
+
+          const start = Math.max(0, first - 3);
+          const end = Math.min(visIds.length - 1, last + 8);
+
+          for (let i = start; i <= end; i++) {
+            const id = visIds[i];
+            const p = pages[pageIndex.get(id)];
+            if (!p || p.removed) continue;
+
+            const key = getCacheKey(p.id, zoom, p.rotation || 0);
+            if (!thumbCache.has(key)) {
+              queuedPrefetch.add(id);
+            }
+          }
+          processPrefetchQueue();
+        }
+
+        function processPrefetchQueue() {
+          if (prefetchRunning) return;
+          prefetchRunning = true;
+
+          (async () => {
+            while (queuedPrefetch.size > 0) {
+              const id = queuedPrefetch.values().next().value;
+              queuedPrefetch.delete(id);
+              const p = pages[pageIndex.get(id)];
+              if (!p || p.removed) continue;
+
+              try {
+                await renderThumb(p, null, true);
+              } catch (_) {}
+              await new Promise((r) => setTimeout(r, 0));
+            }
+            prefetchRunning = false;
+          })();
+        }
+
+        /* ----------------------------------------------------------------------
+           9. PAGE SELECTION & ZOOM
+           ---------------------------------------------------------------------- */
+        function handleSelect(id, evt) {
+          const isRange = evt.shiftKey;
+          const isToggle = evt.ctrlKey || evt.metaKey;
+          const clickedVisIdx = visIds.indexOf(id);
+          if (clickedVisIdx < 0) return;
+
+          if (isRange && lastClickedId && visIds.includes(lastClickedId)) {
+            const anchorVisIdx = visIds.indexOf(lastClickedId);
+            const start = Math.min(anchorVisIdx, clickedVisIdx);
+            const end = Math.max(anchorVisIdx, clickedVisIdx);
+            if (!isToggle) selections.clear();
+            for (let i = start; i <= end; i++) {
+              selections.add(visIds[i]);
+            }
+          } else if (isToggle) {
+            if (selections.has(id)) {
+              selections.delete(id);
+            } else {
+              selections.add(id);
+            }
+            lastClickedId = id;
+          } else {
+            selections.clear();
+            selections.add(id);
+            lastClickedId = id;
+          }
+          refreshSelectionUI();
+        }
+
+        function refreshSelectionUI() {
+          for (const row of pool) {
+            if (!row.boundId) continue;
+            row.el.classList.toggle('selected', selections.has(row.boundId));
+          }
+          selMeta.textContent = `• ${selections.size} selected`;
+        }
+
+        selectAllBtn.addEventListener('click', () => {
+          selections.clear();
+          for (const p of pages) {
+            if (!p.removed) selections.add(p.id);
+          }
+          refreshSelectionUI();
+        });
+
+        clearSelectionBtn.addEventListener('click', () => {
+          selections.clear();
+          refreshSelectionUI();
+        });
+
+        function setZoom(nextZoom) {
+          const clamped = Math.min(2.0, Math.max(0.5, Math.round(nextZoom * 10) / 10));
+          if (clamped === zoom) return;
+          zoom = clamped;
+          zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+          refreshLayoutDeep();
+          schedulePrefetch();
+        }
+
+        zoomOutBtn.addEventListener('click', () => setZoom(zoom - 0.1));
+        zoomInBtn.addEventListener('click', () => setZoom(zoom + 0.1));
+        document.addEventListener('keydown', (e) => {
+          if ((e.key === '=' || e.key === '+') && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            setZoom(zoom + 0.1);
+          }
+          if ((e.key === '-' || e.key === '_') && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            setZoom(zoom - 0.1);
+          }
+        });
+
+        /* ----------------------------------------------------------------------
+           10. TEMPLATES MANAGEMENT (EXPLICIT SAVE ONLY)
+           ---------------------------------------------------------------------- */
+        let templates = loadSavedTemplates();
+
+        function loadSavedTemplates() {
+          try {
+            const raw = localStorage.getItem('templates');
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                return parsed;
+              }
+            }
+          } catch (_) {}
+          return [...DEFAULT_TEMPLATES];
+        }
+
+        function persistTemplates() {
+          try {
+            localStorage.setItem('templates', JSON.stringify(templates));
+          } catch (err) {
+            console.warn('Could not save templates to localStorage:', err);
+          }
+        }
+
+        function normalizeTemplateName(str) {
+          return str.replace(/\s+/g, ' ').trim();
+        }
+
+        saveTemplateBtn.addEventListener('click', () => {
+          const name = normalizeTemplateName(templateInput.value);
+          if (!name) {
+            showToast('Enter a template name first', 'warn');
+            return;
+          }
+          const exists = templates.some((t) => t.toLowerCase() === name.toLowerCase());
+          if (exists) {
+            showToast('Template already exists in directory', 'warn');
+            return;
+          }
+          templates.push(name);
+          persistTemplates();
+          renderTemplateList();
+          showToast(`Saved template: ${name}`, 'ok');
+        });
+
+        function renderTemplateList() {
+          if (!templateListEl) return;
+          templateListEl.innerHTML = '';
+
+          templates.forEach((name, idx) => {
+            const li = document.createElement('li');
+            li.innerHTML = `
+              <span class="tpl-name" title="${escapeHTML(name)}">${escapeHTML(name)}</span>
+              <button class="x-btn remove-tpl" type="button" data-index="${idx}" aria-label="Remove template ${idx + 1}">✕</button>
+            `;
+            templateListEl.appendChild(li);
+          });
+        }
+
+        templateListEl.addEventListener('click', (e) => {
+          const btn = e.target.closest('.remove-tpl');
+          if (!btn) return;
+          const idx = parseInt(btn.dataset.index, 10);
+          if (!Number.isFinite(idx) || idx < 0 || idx >= templates.length) return;
+
+          const name = templates[idx];
+          if (!confirm(`Remove template "${name}"?\n(Numbering will update automatically.)`)) return;
+
+          templates.splice(idx, 1);
+          persistTemplates();
+          renderTemplateList();
+          refreshTemplateAutocomplete(templateInput.value.trim());
+          showToast(`Removed template: ${name}`, 'ok');
+        });
+
+        function showAutocomplete(items) {
+          autocomplete.innerHTML = '';
+          items.forEach(({ name, index }) => {
+            const item = document.createElement('div');
+            item.className = 'autocomplete-item';
+            item.innerHTML = `
+              <span class="autocomplete-num">${index}.</span>
+              <span class="autocomplete-label" style="flex: 1; min-width: 0;">${escapeHTML(name)}</span>
+            `;
+            item.dataset.name = name;
+            item.addEventListener('mousedown', (e) => {
+              e.preventDefault();
+              templateInput.value = name;
+              autocomplete.hidden = true;
+              updateExampleFilename();
+            });
+            autocomplete.appendChild(item);
+          });
+          autocomplete.hidden = items.length === 0;
+        }
+
+        function refreshTemplateAutocomplete(query = '') {
+          const all = templates.map((name, idx) => ({ name, index: idx + 1 }));
+          let matches = [];
+
+          if (isDigits(query) && query.length > 0) {
+            const num = parseInt(query, 10);
+            if (num >= 1 && num <= templates.length) {
+              matches = [all[num - 1]];
+            }
+          } else if (query) {
+            const lower = query.toLowerCase();
+            matches = all.filter((item) => item.name.toLowerCase().includes(lower)).slice(0, 200);
+          } else {
+            matches = all.slice(0, 200);
+          }
+          showAutocomplete(matches);
+        }
+
+        templateInput.addEventListener('focus', () => refreshTemplateAutocomplete(templateInput.value.trim()));
+        templateInput.addEventListener('input', (e) => {
+          refreshTemplateAutocomplete(e.target.value.trim());
+          updateExampleFilename();
+        });
+
+        document.addEventListener('click', (e) => {
+          if (!autocomplete.contains(e.target) && e.target !== templateInput) {
+            autocomplete.hidden = true;
+          }
+        });
+
+        templateInput.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter') return;
+          e.preventDefault();
+
+          const firstItem = autocomplete.querySelector('.autocomplete-item');
+          if (firstItem && !autocomplete.hidden) {
+            templateInput.value = firstItem.dataset.name || templateInput.value;
+            autocomplete.hidden = true;
+            updateExampleFilename();
+            return;
+          }
+
+          const query = templateInput.value.trim();
+          if (isDigits(query)) {
+            const num = parseInt(query, 10);
+            if (num >= 1 && num <= templates.length) {
+              templateInput.value = templates[num - 1];
+              updateExampleFilename();
+            }
+          }
+        });
+
+        /* ----------------------------------------------------------------------
+           11. DATE, TIME & FILENAME FORMATTING
+           ---------------------------------------------------------------------- */
+        function toLocalDatetimeValue(date) {
+          const yyyy = date.getFullYear();
+          const mm   = pad2(date.getMonth() + 1);
+          const dd   = pad2(date.getDate());
+          const hh   = pad2(date.getHours());
+          const mi   = pad2(date.getMinutes());
+          return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+        }
+
+        function formatTimestamp() {
+          if (noDateCheckbox.checked) {
+            return '01-01-1980 09_00_00';
+          }
+          const dt = dtLocal.value ? new Date(dtLocal.value) : new Date();
+          const secs = parseInt(secondsInput.value || '0', 10) || 0;
+          dt.setSeconds(secs);
+          return `${pad2(dt.getDate())}-${pad2(dt.getMonth() + 1)}-${dt.getFullYear()} ${pad2(dt.getHours())}_${pad2(dt.getMinutes())}_${pad2(dt.getSeconds())}`;
+        }
+
+        function updateExampleFilename() {
+          const base = sanitizeFilename(templateInput.value || 'export') || 'export';
+          exampleFilename.textContent = `${base} (${formatTimestamp()})`;
+        }
+
+        [templateInput, dtLocal, secondsInput, noDateCheckbox].forEach((el) => {
+          el.addEventListener('input', updateExampleFilename);
+          el.addEventListener('change', updateExampleFilename);
+        });
+
+        function enforceFourDigitYear() {
+          const val = dtLocal.value;
+          const match = val && val.match(/^(\d{1,})(-\d{2}-\d{2}T\d{2}:\d{2})$/);
+          if (!match) return;
+
+          const yearStr = match[1].slice(0, 4);
+          let yearNum = parseInt(yearStr || '0', 10);
+          if (!Number.isFinite(yearNum)) return;
+
+          yearNum = Math.min(2099, Math.max(1980, yearNum));
+          dtLocal.value = String(yearNum).padStart(4, '0') + match[2];
+        }
+
+        dtLocal.addEventListener('input', enforceFourDigitYear);
+        dtLocal.addEventListener('blur', enforceFourDigitYear);
+        dtLocal.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            splitNow();
+          }
+        });
+
+        /* ----------------------------------------------------------------------
+           12. PAGE RANGE SELECTION
+           ---------------------------------------------------------------------- */
+        function refreshRangeScope() {
+          const prevValue = rangeScope.value;
+          rangeScope.innerHTML = '';
+
+          const optAll = document.createElement('option');
+          optAll.value = 'all';
+          optAll.textContent = 'Combined (visible order)';
+          rangeScope.appendChild(optAll);
+
+          for (const doc of docs) {
+            const opt = document.createElement('option');
+            opt.value = doc.id;
+            opt.textContent = doc.name;
+            rangeScope.appendChild(opt);
+          }
+
+          if ([...rangeScope.options].some((o) => o.value === prevValue)) {
+            rangeScope.value = prevValue;
+          }
+        }
+
+        function parseRanges(rangeStr, maxPage) {
+          const result = new Set();
+          if (!rangeStr) return result;
+
+          const parts = rangeStr.split(',').map((s) => s.trim()).filter(Boolean);
+          for (const part of parts) {
+            const match = part.match(/^(\d+)\s*-\s*(\d+)$/);
+            if (match) {
+              let start = parseInt(match[1], 10);
+              let end = parseInt(match[2], 10);
+              if (Number.isFinite(start) && Number.isFinite(end)) {
+                if (start > end) [start, end] = [end, start];
+                for (let i = Math.max(1, start); i <= Math.min(maxPage, end); i++) {
+                  result.add(i);
+                }
+              }
+            } else {
+              const num = parseInt(part, 10);
+              if (Number.isFinite(num) && num >= 1 && num <= maxPage) {
+                result.add(num);
+              }
+            }
+          }
+          return result;
+        }
+
+        function applyRanges() {
+          const text = rangeInput.value.trim();
+          if (!text) {
+            selections.clear();
+            refreshSelectionUI();
+            return;
+          }
+
+          const scope = rangeScope.value || 'all';
+          selections.clear();
+
+          if (scope === 'all') {
+            const targetIndices = parseRanges(text, visIds.length);
+            for (const idx of targetIndices) {
+              const id = visIds[idx - 1];
+              if (id) selections.add(id);
+            }
+          } else {
+            const doc = docs.find((d) => d.id === scope);
+            const maxPage = doc ? doc.pdfjs.numPages : pages.length;
+            const targetPageNums = parseRanges(text, maxPage);
+
+            for (const p of pages) {
+              if (p.docId === scope && !p.removed && targetPageNums.has(p.pageNum)) {
+                selections.add(p.id);
+              }
+            }
+          }
+          refreshSelectionUI();
+        }
+
+        applyRangesBtn.addEventListener('click', applyRanges);
+        rangeInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            applyRanges();
+          }
+        });
+
+        /* ----------------------------------------------------------------------
+           13. SPLIT / EXPORT (DIRECT DOWNLOAD WITHOUT NEW TAB) & UNDO
+           ---------------------------------------------------------------------- */
+        splitBtn.addEventListener('click', splitNow);
+        cancelBtn.addEventListener('click', cancelExport);
+
+        document.addEventListener('keydown', (e) => {
+          const activeTag = document.activeElement?.tagName;
+          if (e.key === 'Enter' && !['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(activeTag)) {
+            splitNow();
+          }
+          if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey)) {
+            undoBtn.click();
+          }
+        });
+
+        function cancelExport() {
+          exportCancelFlag = true;
+          splitBtn.disabled = false;
+          cancelBtn.style.display = 'none';
+          setProgress(0);
+          showToast('Export cancelled', 'warn');
+        }
+
+        function unbindRemovedRows(removedIds) {
+          const removedSet = new Set(removedIds);
+          for (const row of pool) {
+            if (row.boundId && removedSet.has(row.boundId)) {
+              const p = pages[pageIndex.get(row.boundId)];
+              if (p?.renderTask) {
+                try { p.renderTask.cancel(); } catch (_) {}
+                p.renderTask = null;
+              }
+              if (p) p.canvasEl = null;
+              row.boundId = null;
+              row.el.style.display = 'none';
+            }
+          }
+        }
+
+        async function savePdfToTarget(pdfBytes, filename) {
+          // 1. If a custom directory was picked via File System Access API, write directly there
+          if (outputDirHandle) {
+            try {
+              const fileHandle = await outputDirHandle.getFileHandle(filename, { create: true });
+              const writable = await fileHandle.createWritable();
+              await writable.write(pdfBytes);
+              await writable.close();
+              return;
+            } catch (err) {
+              console.warn('Direct folder write failed, falling back to browser download:', err);
+            }
+          }
+
+          // 2. Standard download using application/octet-stream so LibreWolf/Firefox
+          // never opens the PDF in a new tab or routes it through AppData\Local\Temp
+          const blob = new Blob([pdfBytes], { type: 'application/octet-stream' });
+          const url = URL.createObjectURL(blob);
+
+          const link = document.createElement('a');
+          link.style.display = 'none';
+          link.href = url;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+
+          setTimeout(() => {
+            try { URL.revokeObjectURL(url); } catch (_) {}
+          }, 2000);
+        }
+
+        async function splitNow() {
+          if (selections.size === 0) {
+            showToast('No pages selected', 'err');
+            return;
+          }
+
+          exportCancelFlag = false;
+          splitBtn.disabled = true;
+          cancelBtn.style.display = 'inline-block';
+          lastUndo = null;
+
+          const selectedPages = visIds
+            .filter((id) => selections.has(id))
+            .map((id) => pages[pageIndex.get(id)]);
+
+          try {
+            const pdfBytes = await exportSelectedPages(selectedPages);
+            const filename = `${exampleFilename.textContent}.pdf`;
+
+            await savePdfToTarget(pdfBytes, filename);
+
+            const removedIds = [];
+            for (const p of selectedPages) {
+              p.removed = true;
+              if (p.renderTask) {
+                try { p.renderTask.cancel(); } catch (_) {}
+              }
+              heightsMap.delete(p.id);
+              removedIds.push(p.id);
+            }
+
+            lastUndo = { removedIds };
+            selections.clear();
+            refreshSelectionUI();
+            buildFileList();
+            updateCounts();
+            unbindRemovedRows(removedIds);
+            refreshLayoutDeep();
+            viewport.scrollTo({ top: 0, behavior: 'instant' });
+
+            if (noDateCheckbox.checked) {
+              noDateCheckbox.checked = false;
+            }
+
+            const currentDt = dtLocal.value ? new Date(dtLocal.value) : new Date();
+            currentDt.setHours(9, 0, 0, 0);
+            dtLocal.value = toLocalDatetimeValue(currentDt);
+            updateExampleFilename();
+
+            showToast(`Split saved (${selectedPages.length} pages)`, 'ok');
+          } catch (err) {
+            if (err?.message !== '__CANCELLED__') {
+              console.error(err);
+              showToast(`Split failed: ${err?.message || err}`, 'err');
+            }
+          } finally {
+            splitBtn.disabled = false;
+            cancelBtn.style.display = 'none';
+            setProgress(0);
+          }
+        }
+
+        async function exportSelectedPages(selectedPages) {
+          const outPdf = await PDFLib.PDFDocument.create();
+          const loadedSrcDocs = new Map();
+          const total = selectedPages.length;
+
+          for (const p of selectedPages) {
+            if (exportCancelFlag) throw new Error('__CANCELLED__');
+            if (!loadedSrcDocs.has(p.docId)) {
+              const docRecord = docs.find((d) => d.id === p.docId);
+              const srcPdf = await PDFLib.PDFDocument.load(docRecord.bytes);
+              loadedSrcDocs.set(p.docId, srcPdf);
+            }
+          }
+
+          for (let i = 0; i < total; i++) {
+            if (exportCancelFlag) throw new Error('__CANCELLED__');
+            const p = selectedPages[i];
+            const srcPdf = loadedSrcDocs.get(p.docId);
+            const [copiedPage] = await outPdf.copyPages(srcPdf, [p.pageNum - 1]);
+
+            if (p.rotation) {
+              copiedPage.setRotation(degrees(p.rotation));
+            }
+            outPdf.addPage(copiedPage);
+
+            setProgress(Math.round(((i + 1) * 100) / total));
+            await new Promise((r) => setTimeout(r, 0));
+          }
+
+          return await outPdf.save();
+        }
+
+        undoBtn.addEventListener('click', () => {
+          if (!lastUndo?.removedIds?.length) {
+            showToast('Nothing to undo', 'warn');
+            return;
+          }
+          for (const id of lastUndo.removedIds) {
+            const p = pages[pageIndex.get(id)];
+            if (p) p.removed = false;
+          }
+          lastUndo = null;
+          buildFileList();
+          updateCounts();
+          refreshLayoutDeep();
+          showToast('Undo complete', 'ok');
+        });
+
+        /* ----- Initial Startup Render ----- */
+        renderTemplateList();
+        updateExampleFilename();
+        ensurePool();
+        refreshLayoutDeep();
+        applyRamMode(initialRamMode, false);
+
+      })().catch((err) => {
+        console.error(err);
+        alert(
+          'Startup failed: Required local libraries could not be loaded.\n\n' +
+          'For GDPR and offline security, external CDNs are disabled. ' +
+          'Please ensure pdf.min.js and pdf-lib.min.js are placed inside ./vendor/ next to this HTML file.'
+        );
+      });
+    })();
+  </script>
+</body>
+</html>
